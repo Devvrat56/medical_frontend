@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 const API_BASE = "https://onco-chatbot.onrender.com/api";
 
@@ -114,7 +115,7 @@ const getUiText = (lang, key) =>
   (UI_TEXT[lang] || UI_TEXT.en)[key] || UI_TEXT.en[key];
 
 /* ================= TRANSLATION (ROBUST w/ FALLBACK) ================= */
-const HF_API_KEY = process.env.REACT_APP_HF_API_KEY; // Use environment variable
+const HF_API_KEY = "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";
 const MODEL_ID = "facebook/nllb-200-distilled-600M";
 
 const NLLB_LANG_MAP = {
@@ -132,16 +133,63 @@ const NLLB_LANG_MAP = {
 
 // FALLBACK PROVIDER (MyMemory)
 async function translateWithMyMemory(text, targetLang, sourceLang) {
-  try {
-    const res = await fetch(
-      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-    );
-    const data = await res.json();
-    return data.responseData.translatedText || null;
-  } catch (e) {
-    console.warn("MyMemory fallback failed:", e);
-    return null;
+  // Helper: Translate a single chunk
+  const translateChunk = async (chunk) => {
+    try {
+      const res = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`
+      );
+      const data = await res.json();
+      const translation = data.responseData.translatedText;
+
+      if (translation && (
+        translation.includes("QUERY LENGTH LIMIT EXCEEDED") ||
+        translation.includes("MYMEMORY WARNING")
+      )) {
+        return null;
+      }
+      return translation;
+    } catch (e) {
+      console.warn("MyMemory chunk failed:", e);
+      return null;
+    }
+  };
+
+  // If short enough, single call
+  if (text.length <= 500) {
+    return await translateChunk(text);
   }
+
+  // If long, split by sentences to preserve context
+  // Regex matches sentences ending with . ! ? followed by space or end of string
+  const sentences = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [text];
+
+  const chunks = [];
+  let currentChunk = "";
+
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > 500) {
+      if (currentChunk) chunks.push(currentChunk.trim());
+      currentChunk = sentence;
+    } else {
+      currentChunk += sentence;
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk.trim());
+
+  // Translate chunks sequentially
+  const translatedParts = [];
+  for (const chunk of chunks) {
+    if (chunk.length > 500) {
+      // Chunk still too big (unlikely unless huge sentence), assume fail or keep original
+      translatedParts.push(chunk);
+    } else {
+      const trans = await translateChunk(chunk);
+      translatedParts.push(trans || chunk); // Keep original if fail
+    }
+  }
+
+  return translatedParts.join(" ");
 }
 
 async function translateText(text, targetLang, sourceLang = "en") {
@@ -208,6 +256,89 @@ function Chat({ user, viewMode, onViewSummary }) {
   const [sessionId, setSessionId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
+
+  /* ================= HISTORY & SESSIONS ================= */
+  const [sessions, setSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+
+  // Load history on mount or user/role change
+  useEffect(() => {
+    const key = `chat_history_${user.role}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      setSessions(parsed);
+      if (parsed.length > 0) {
+        // Load most recent
+        const last = parsed[0];
+        setActiveSessionId(last.id);
+        setMessages(last.messages || []);
+        setSessionId(last.backendSessionId || null);
+        setInitLoading(false); // Assume loaded if we have history
+        return;
+      }
+    }
+    // No history? New chat
+    createNewSession();
+  }, [user.role]);
+
+  // Save history whenever sessions change
+  useEffect(() => {
+    if (sessions.length > 0) {
+      localStorage.setItem(`chat_history_${user.role}`, JSON.stringify(sessions));
+    }
+  }, [sessions, user.role]);
+
+  // Sync current messages/sessionId to active session
+  useEffect(() => {
+    if (!activeSessionId) return;
+
+    setSessions(prev => prev.map(s => {
+      if (s.id === activeSessionId) {
+        return {
+          ...s,
+          messages: messages,
+          backendSessionId: sessionId,
+          preview: messages.length > 0
+            ? messages[messages.length - 1].text.substring(0, 60) + "..."
+            : "New Chat",
+          timestamp: Date.now() // Update time on activity
+        };
+      }
+      return s;
+    }));
+  }, [messages, sessionId]);
+
+  const createNewSession = () => {
+    const newId = Date.now().toString();
+    const newSession = {
+      id: newId,
+      timestamp: Date.now(),
+      messages: [], // Will be filled by init or user
+      backendSessionId: null, // Will be filled by init
+      preview: "New Chat"
+    };
+
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newId);
+    setMessages([]);
+    setSessionId(null);
+    setInitLoading(true);
+    // The existing 'initChat' effect will trigger because sessionId becomes null
+  };
+
+  const loadSession = (session) => {
+    if (session.id === activeSessionId) return;
+    setActiveSessionId(session.id);
+    setMessages(session.messages || []);
+    setSessionId(session.backendSessionId || null);
+  };
+
+  // Format Date for Sidebar
+  const formatDate = (ts) => {
+    const d = new Date(ts);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
 
   const [isRecording, setIsRecording] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -303,7 +434,7 @@ function Chat({ user, viewMode, onViewSummary }) {
     };
 
     initChat();
-  }, [displayLanguage, user]);
+  }, [user.role, user.cancerType, user.stage, sessionId]);
 
   /* ================= LANGUAGE SWITCH ================= */
   const handleLanguageChange = async (e) => {
@@ -369,7 +500,7 @@ function Chat({ user, viewMode, onViewSummary }) {
 
   /* ================= SEND MESSAGE ================= */
   const sendMessage = async () => {
-    if ((!input.trim() && !selectedFile) || loading) return;
+    if ((!input?.trim() && !selectedFile) || loading) return;
 
     const userText = input.trim();
     const file = selectedFile;
@@ -430,125 +561,162 @@ function Chat({ user, viewMode, onViewSummary }) {
   return (
     <div className="app-container">
       <div className={`chat-window ${viewMode}`}>
-        {/* HEADER */}
-        <div className="chat-header">
-          <div className="header-info">
-            <div className="bot-avatar">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v12m6-6H6" /></svg>
-            </div>
-            <div className="header-text">
-              <h3>{ui('title')}</h3>
-              <div className="status-badge">
-                <span className={`status-dot ${initLoading ? 'warning' : ''}`}></span>
-                {initLoading ? ui('connecting') : ui('online')}
-              </div>
-            </div>
-          </div>
 
-          <div className="header-controls">
-            {user.role === 'doctor' && (
-              <button
-                onClick={onViewSummary}
-                title="View Patient Summary"
-                style={{
-                  marginRight: '10px',
-                  padding: '6px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid #e2e8f0',
-                  background: '#fff',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px'
-                }}
+        {/* SIDEBAR */}
+        <div className={`chat-sidebar ${viewMode === 'mobile' ? '' : 'desktop'}`}>
+          <div className="sidebar-header">
+            <div className="sidebar-title">
+              <span>🕒</span> History ({user.role})
+            </div>
+            <button className="new-chat-btn" onClick={createNewSession}>
+              <span>+</span> New Chat
+            </button>
+          </div>
+          <div className="session-list">
+            {sessions.map(s => (
+              <div
+                key={s.id}
+                className={`session-item ${s.id === activeSessionId ? 'active' : ''}`}
+                onClick={() => loadSession(s)}
               >
-                <span>📋</span> Summary
-              </button>
-            )}
-            <select
-              className="lang-select"
-              value={displayLanguage}
-              onChange={handleLanguageChange}
-            >
-              {SUPPORTED_LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>{l.name}</option>
-              ))}
-            </select>
+                <div style={{ fontWeight: 600 }}>
+                  {s.messages.length > 0 ? "Conversation" : "New Chat"}
+                </div>
+                <div className="session-preview">{s.preview}</div>
+                <div className="session-date">{formatDate(s.timestamp)}</div>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* MESSAGES */}
-        <div className="messages-container">
-          {messages.map((m, i) => (
-            <div key={i} className={`message-group ${m.sender}`}>
-              <div className={`msg-avatar ${m.sender}`}>
-                {m.sender === 'user' ? 'U' : 'AI'}
+        {/* MAIN CHAT */}
+        <div className="chat-main">
+          {/* HEADER */}
+          <div className="chat-header">
+            <div className="header-info">
+              <div className="bot-avatar">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v12m6-6H6" /></svg>
               </div>
-              <div className="msg-bubble">
-                <div className="bot-content">{m.text}</div>
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="message-group bot">
-              <div className="msg-avatar bot">AI</div>
-              <div className="msg-bubble typing">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>.</span><span>.</span><span>.</span>
-                  <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 500 }}>
-                    {ui('thinking')}
-                  </span>
+              <div className="header-text">
+                <h3>{ui('title')}</h3>
+                <div className="status-badge">
+                  <span className={`status-dot ${initLoading ? 'warning' : ''}`}></span>
+                  {initLoading ? ui('connecting') : ui('online')}
                 </div>
               </div>
             </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
 
-        {/* INPUT */}
-        <div className="input-region">
-          {selectedFile && (
-            <div className="file-preview-bar">
-              <div className="file-chip">
-                <span>📄 {selectedFile.name}</span>
-                <button className="remove-file" onClick={clearFile}>✕</button>
-              </div>
+            <div className="header-controls">
+              {user.role === 'doctor' && (
+                <button
+                  onClick={onViewSummary}
+                  title="View Patient Summary"
+                  style={{
+                    marginRight: '10px',
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  <span>📋</span> Summary
+                </button>
+              )}
+              <select
+                className="lang-select"
+                value={displayLanguage}
+                onChange={handleLanguageChange}
+              >
+                {SUPPORTED_LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>{l.name}</option>
+                ))}
+              </select>
             </div>
-          )}
+          </div>
 
-          <div className="input-comp">
-            <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept=".pdf,.doc,.docx,.txt" />
-            <button className="action-btn" onClick={() => fileInputRef.current.click()} title="Upload File">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
-            </button>
+          {/* MESSAGES */}
+          <div className="messages-container">
+            {messages.map((m, i) => (
+              <div key={i} className={`message-group ${m.sender}`}>
+                <div className={`msg-avatar ${m.sender}`}>
+                  {m.sender === 'user' ? 'U' : 'AI'}
+                </div>
+                <div className="msg-bubble">
+                  <div className="bot-content">
+                    {m.sender === 'bot' ? (
+                      <ReactMarkdown>{m.text}</ReactMarkdown>
+                    ) : (
+                      m.text
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="message-group bot">
+                <div className="msg-avatar bot">AI</div>
+                <div className="msg-bubble typing">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>.</span><span>.</span><span>.</span>
+                    <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 500 }}>
+                      {ui('thinking')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
 
-            <button className={`action-btn ${isRecording ? 'active-mic' : ''}`} onClick={toggleRecording} title="Voice Input">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>
-            </button>
-
-            {/* TRANSLATE INPUT BUTTON (Visible only if not English & has text) */}
-            {displayLanguage !== 'en' && input.trim() && (
-              <button className="action-btn" onClick={handleDraftTranslation} title={`Translate to ${SUPPORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name}`}>
-                {/* Translate Icon */}
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 8l6 6" /><path d="M4 14h6" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="M22 22l-5-10-5 10" /><path d="M14 18h6" />
-                </svg>
-              </button>
+          {/* INPUT */}
+          <div className="input-region">
+            {selectedFile && (
+              <div className="file-preview-bar">
+                <div className="file-chip">
+                  <span>📄 {selectedFile.name}</span>
+                  <button className="remove-file" onClick={clearFile}>✕</button>
+                </div>
+              </div>
             )}
 
-            <input
-              className="chat-input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder={isRecording ? (displayLanguage === 'en' ? "Listening..." : "...") : ui('placeholder')}
-              disabled={loading}
-            />
+            <div className="input-comp">
+              <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept=".pdf,.doc,.docx,.txt" />
+              <button className="action-btn" onClick={() => fileInputRef.current.click()} title="Upload File">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+              </button>
 
-            <button className="send-btn" onClick={sendMessage} disabled={loading || (!input.trim() && !selectedFile)}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
-            </button>
+              <button className={`action-btn ${isRecording ? 'active-mic' : ''}`} onClick={toggleRecording} title="Voice Input">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>
+              </button>
+
+              {/* TRANSLATE INPUT BUTTON (Visible only if not English & has text) */}
+              {displayLanguage !== 'en' && input.trim() && (
+                <button className="action-btn" onClick={handleDraftTranslation} title={`Translate to ${SUPPORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name}`}>
+                  {/* Translate Icon */}
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 8l6 6" /><path d="M4 14h6" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="M22 22l-5-10-5 10" /><path d="M14 18h6" />
+                  </svg>
+                </button>
+              )}
+
+              <input
+                className="chat-input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder={isRecording ? (displayLanguage === 'en' ? "Listening..." : "...") : ui('placeholder')}
+                disabled={loading}
+              />
+
+              <button className="send-btn" onClick={sendMessage} disabled={loading || (!input.trim() && !selectedFile)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>
