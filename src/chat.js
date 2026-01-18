@@ -71,7 +71,7 @@ const UI_TEXT = {
     connecting: "সংযোগ করা হচ্ছে...",
     thinking: "চিন্তা করছে...",
     placeholder: "আপনার বার্তা টাইপ করুন...",
-    error: "কিছু ভুল হয়েছে。",
+    error: "কিছু ভুল হয়েছে।",
   },
   ta: {
     init: "வணக்கம்! நான் உங்கள் புற்றுநோய் உதவியாளர். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?",
@@ -114,8 +114,7 @@ const UI_TEXT = {
 const getUiText = (lang, key) =>
   (UI_TEXT[lang] || UI_TEXT.en)[key] || UI_TEXT.en[key];
 
-/* ================= TRANSLATION (ROBUST w/ FALLBACK) ================= */
-const HF_API_KEY = "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";
+/* ================= TRANSLATION ================= */
 const MODEL_ID = "facebook/nllb-200-distilled-600M";
 
 const NLLB_LANG_MAP = {
@@ -131,9 +130,7 @@ const NLLB_LANG_MAP = {
   sv: "swe_Latn",
 };
 
-// FALLBACK PROVIDER (MyMemory)
 async function translateWithMyMemory(text, targetLang, sourceLang) {
-  // Helper: Translate a single chunk
   const translateChunk = async (chunk) => {
     try {
       const res = await fetch(
@@ -142,67 +139,59 @@ async function translateWithMyMemory(text, targetLang, sourceLang) {
       const data = await res.json();
       const translation = data.responseData.translatedText;
 
-      if (translation && (
-        translation.includes("QUERY LENGTH LIMIT EXCEEDED") ||
-        translation.includes("MYMEMORY WARNING")
-      )) {
+      if (translation?.includes("QUERY LENGTH LIMIT EXCEEDED") || 
+          translation?.includes("MYMEMORY WARNING")) {
         return null;
       }
       return translation;
     } catch (e) {
-      console.warn("MyMemory chunk failed:", e);
+      console.warn("MyMemory failed:", e);
       return null;
     }
   };
 
-  // If short enough, single call
   if (text.length <= 500) {
-    return await translateChunk(text);
+    return await translateChunk(text) || text;
   }
 
-  // If long, split by sentences to preserve context
-  // Regex matches sentences ending with . ! ? followed by space or end of string
   const sentences = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [text];
-
   const chunks = [];
-  let currentChunk = "";
+  let current = "";
 
   for (const sentence of sentences) {
-    if ((currentChunk + sentence).length > 500) {
-      if (currentChunk) chunks.push(currentChunk.trim());
-      currentChunk = sentence;
+    if ((current + sentence).length > 500) {
+      if (current) chunks.push(current.trim());
+      current = sentence;
     } else {
-      currentChunk += sentence;
+      current += sentence;
     }
   }
-  if (currentChunk) chunks.push(currentChunk.trim());
+  if (current) chunks.push(current.trim());
 
-  // Translate chunks sequentially
-  const translatedParts = [];
-  for (const chunk of chunks) {
-    if (chunk.length > 500) {
-      // Chunk still too big (unlikely unless huge sentence), assume fail or keep original
-      translatedParts.push(chunk);
-    } else {
-      const trans = await translateChunk(chunk);
-      translatedParts.push(trans || chunk); // Keep original if fail
-    }
-  }
+  const translated = await Promise.all(
+    chunks.map(chunk => translateChunk(chunk).then(t => t || chunk))
+  );
 
-  return translatedParts.join(" ");
+  return translated.join(" ");
 }
 
 async function translateText(text, targetLang, sourceLang = "en") {
   if (!text || targetLang === sourceLang) return text;
 
+  const HF_API_KEY = process.env.REACT_APP_HF_API_KEY;
+
+  if (!HF_API_KEY) {
+    console.warn("Hugging Face API key is missing. Using fallback translation.");
+    return await translateWithMyMemory(text, targetLang, sourceLang) || text;
+  }
+
   const srcCode = NLLB_LANG_MAP[sourceLang] || "eng_Latn";
   const tgtCode = NLLB_LANG_MAP[targetLang] || "eng_Latn";
 
-  // 1. Try Hugging Face (High Quality)
-  for (let i = 0; i < 2; i++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+      const timeout = setTimeout(() => controller.abort(), 12000);
 
       const res = await fetch(
         `https://api-inference.huggingface.co/models/${MODEL_ID}`,
@@ -214,37 +203,31 @@ async function translateText(text, targetLang, sourceLang = "en") {
           },
           body: JSON.stringify({
             inputs: text,
-            parameters: {
-              src_lang: srcCode,
-              tgt_lang: tgtCode,
-            },
+            parameters: { src_lang: srcCode, tgt_lang: tgtCode },
           }),
           signal: controller.signal,
         }
       );
-      clearTimeout(timeoutId);
 
-      if (res.status === 503) {
-        if (i === 0) {
-          await new Promise(r => setTimeout(r, 1500));
-          continue; // Retry once
-        }
-        break; // Fallback
+      clearTimeout(timeout);
+
+      if (res.status === 503 && attempt === 0) {
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
       }
 
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data[0]?.translation_text) return data[0].translation_text;
-        if (data[0]?.generated_text) return data[0].generated_text;
+        return data[0]?.translation_text || data[0]?.generated_text || text;
       }
-    } catch (err) { }
+    } catch (err) {
+      console.warn("HF translation attempt failed:", err);
+    }
   }
 
-  // 2. Fallback to MyMemory if HF fails
-  const fallback = await translateWithMyMemory(text, targetLang, sourceLang);
-  return fallback || text;
+  // Final fallback
+  return await translateWithMyMemory(text, targetLang, sourceLang) || text;
 }
-
 
 /* ================= CHAT COMPONENT ================= */
 function Chat({ user, viewMode, onViewSummary }) {
@@ -257,11 +240,10 @@ function Chat({ user, viewMode, onViewSummary }) {
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
 
-  /* ================= HISTORY & SESSIONS ================= */
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
 
-  // Load history on mount or user/role change
+  // Load chat history
   useEffect(() => {
     const key = `chat_history_${user.role}`;
     const stored = localStorage.getItem(key);
@@ -269,62 +251,57 @@ function Chat({ user, viewMode, onViewSummary }) {
       const parsed = JSON.parse(stored);
       setSessions(parsed);
       if (parsed.length > 0) {
-        // Load most recent
         const last = parsed[0];
         setActiveSessionId(last.id);
         setMessages(last.messages || []);
         setSessionId(last.backendSessionId || null);
-        setInitLoading(false); // Assume loaded if we have history
+        setInitLoading(false);
         return;
       }
     }
-    // No history? New chat
     createNewSession();
   }, [user.role]);
 
-  // Save history whenever sessions change
+  // Save history
   useEffect(() => {
     if (sessions.length > 0) {
       localStorage.setItem(`chat_history_${user.role}`, JSON.stringify(sessions));
     }
   }, [sessions, user.role]);
 
-  // Sync current messages/sessionId to active session
+  // Sync active session
   useEffect(() => {
     if (!activeSessionId) return;
-
-    setSessions(prev => prev.map(s => {
-      if (s.id === activeSessionId) {
-        return {
-          ...s,
-          messages: messages,
-          backendSessionId: sessionId,
-          preview: messages.length > 0
-            ? messages[messages.length - 1].text.substring(0, 60) + "..."
-            : "New Chat",
-          timestamp: Date.now() // Update time on activity
-        };
-      }
-      return s;
-    }));
-  }, [messages, sessionId]);
+    setSessions(prev =>
+      prev.map(s =>
+        s.id === activeSessionId
+          ? {
+              ...s,
+              messages,
+              backendSessionId: sessionId,
+              preview: messages.length > 0
+                ? messages[messages.length - 1].text.substring(0, 60) + "..."
+                : "New Chat",
+              timestamp: Date.now(),
+            }
+          : s
+      )
+    );
+  }, [messages, sessionId, activeSessionId]);
 
   const createNewSession = () => {
     const newId = Date.now().toString();
-    const newSession = {
+    setSessions(prev => [{
       id: newId,
       timestamp: Date.now(),
-      messages: [], // Will be filled by init or user
-      backendSessionId: null, // Will be filled by init
+      messages: [],
+      backendSessionId: null,
       preview: "New Chat"
-    };
-
-    setSessions(prev => [newSession, ...prev]);
+    }, ...prev]);
     setActiveSessionId(newId);
     setMessages([]);
     setSessionId(null);
     setInitLoading(true);
-    // The existing 'initChat' effect will trigger because sessionId becomes null
   };
 
   const loadSession = (session) => {
@@ -334,10 +311,9 @@ function Chat({ user, viewMode, onViewSummary }) {
     setSessionId(session.backendSessionId || null);
   };
 
-  // Format Date for Sidebar
   const formatDate = (ts) => {
     const d = new Date(ts);
-    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
   const [isRecording, setIsRecording] = useState(false);
@@ -349,63 +325,47 @@ function Chat({ user, viewMode, onViewSummary }) {
 
   const ui = (key) => getUiText(displayLanguage, key);
 
-  /* ================= AUTO SCROLL ================= */
+  // Auto scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  /* ================= WAKE UP SERVER ================= */
+  // Wake up server
   useEffect(() => {
-    fetch(`${API_BASE}/health`).catch(() => { });
+    fetch(`${API_BASE}/health`).catch(() => {});
   }, []);
 
-  /* ================= SPEECH ================= */
+  // Speech recognition setup
   useEffect(() => {
-    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window))
-      return;
+    if (!("SpeechRecognition" in window || "webkitSpeechRecognition" in window)) return;
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SR();
 
-    // Valid browser language codes
-    const SR_LANG_MAP = {
-      en: "en-US",
-      hi: "hi-IN",
-      es: "es-ES",
-      fr: "fr-FR",
-      ar: "ar-SA",
-      bn: "bn-IN",
-      ta: "ta-IN",
-      de: "de-DE",
-      pa: "pa-IN",
-      sv: "sv-SE"
+    const langMap = {
+      en: "en-US", hi: "hi-IN", es: "es-ES", fr: "fr-FR", ar: "ar-SA",
+      bn: "bn-IN", ta: "ta-IN", de: "de-DE", pa: "pa-IN", sv: "sv-SE"
     };
 
-    recognition.lang = SR_LANG_MAP[displayLanguage] || "en-US";
+    recognition.lang = langMap[displayLanguage] || "en-US";
 
     recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setInput((prev) => prev + " " + transcript);
+      setInput(prev => prev + " " + e.results[0][0].transcript);
       setIsRecording(false);
     };
 
-    recognition.onerror = () => setIsRecording(false);
-    recognition.onend = () => setIsRecording(false);
+    recognition.onerror = recognition.onend = () => setIsRecording(false);
 
     recognitionRef.current = recognition;
   }, [displayLanguage]);
 
   const toggleRecording = () => {
     if (!recognitionRef.current) return;
-    if (isRecording) {
-      recognitionRef.current.stop();
-    } else {
-      recognitionRef.current.start();
-      setIsRecording(true);
-    }
+    isRecording ? recognitionRef.current.stop() : recognitionRef.current.start();
+    setIsRecording(!isRecording);
   };
 
-  /* ================= INIT CHAT ================= */
+  // Initialize chat session
   useEffect(() => {
     if (sessionId) return;
 
@@ -424,11 +384,15 @@ function Chat({ user, viewMode, onViewSummary }) {
         });
         const data = await res.json();
         setSessionId(data.session_id);
-      } catch (e) { }
+      } catch (e) {
+        console.error("Chat init failed:", e);
+      }
 
-      setMessages([
-        { sender: "bot", text: ui('init'), originalText: UI_TEXT.en.init },
-      ]);
+      setMessages([{
+        sender: "bot",
+        text: UI_TEXT.en.init,
+        originalText: UI_TEXT.en.init
+      }]);
 
       setInitLoading(false);
     };
@@ -436,69 +400,61 @@ function Chat({ user, viewMode, onViewSummary }) {
     initChat();
   }, [user.role, user.cancerType, user.stage, sessionId]);
 
-  /* ================= LANGUAGE SWITCH ================= */
   const handleLanguageChange = async (e) => {
     const newLang = e.target.value;
     setDisplayLanguage(newLang);
     localStorage.setItem("chat_language", newLang);
 
-    // UI updates immediately via state, but we need to update history
-    if (messages.length > 0) {
+    if (!messages.length) return;
 
-      const promises = messages.map(async (msg) => {
-        if (msg.sender === "bot" && msg.originalText) {
-          // Fast Path: Init Messages
-          if (msg.originalText === UI_TEXT.en.init) {
-            return { ...msg, text: getUiText(newLang, 'init') };
-          }
-          // Switch back to English
-          if (newLang === 'en') {
-            return { ...msg, text: msg.originalText };
-          }
-          // Translate dynamic Content
-          try {
-            const translated = await translateText(msg.originalText, newLang, "en");
-            return { ...msg, text: translated };
-          } catch (e) {
-            return msg;
-          }
+    const updated = await Promise.all(
+      messages.map(async (msg) => {
+        if (msg.sender !== "bot" || !msg.originalText) return msg;
+
+        if (msg.originalText === UI_TEXT.en.init) {
+          return { ...msg, text: getUiText(newLang, "init") };
         }
-        return msg;
-      });
+        if (newLang === "en") {
+          return { ...msg, text: msg.originalText };
+        }
 
-      const updatedMessages = await Promise.all(promises);
-      setMessages(updatedMessages);
-    }
+        try {
+          const translated = await translateText(msg.originalText, newLang, "en");
+          return { ...msg, text: translated };
+        } catch {
+          return msg;
+        }
+      })
+    );
+
+    setMessages(updated);
   };
 
-  /* ================= DRAFT TRANSLATION ================= */
   const handleDraftTranslation = async () => {
-    if (!input.trim() || displayLanguage === 'en') return;
+    if (!input?.trim() || displayLanguage === "en") return;
 
     const original = input;
     setInput("Translating...");
 
     try {
-      // Translate from English (assumed) to Target Language
       const translated = await translateText(original, displayLanguage, "en");
-      setInput(translated); // Update input field with translated text
-    } catch (e) {
-      setInput(original); // Revert on fail
+      setInput(translated);
+    } catch {
+      setInput(original);
     }
   };
 
-  /* ================= FILE HANDLING ================= */
   const handleFileSelect = (e) => {
-    if (e.target.files && e.target.files[0]) {
+    if (e.target.files?.[0]) {
       setSelectedFile(e.target.files[0]);
     }
   };
+
   const clearFile = () => {
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  /* ================= SEND MESSAGE ================= */
   const sendMessage = async () => {
     if ((!input?.trim() && !selectedFile) || loading) return;
 
@@ -509,13 +465,15 @@ function Chat({ user, viewMode, onViewSummary }) {
     clearFile();
     setLoading(true);
 
-    // Optimistic: Show User text
-    setMessages((prev) => [...prev, { sender: "user", text: userText, originalText: userText }]);
+    setMessages(prev => [...prev, {
+      sender: "user",
+      text: userText,
+      originalText: userText
+    }]);
 
     try {
-      // 1. Prepare English Payload
       let englishPayload = userText;
-      if (displayLanguage !== 'en') {
+      if (displayLanguage !== "en") {
         englishPayload = await translateText(userText, "en", displayLanguage);
       }
 
@@ -531,38 +489,37 @@ function Chat({ user, viewMode, onViewSummary }) {
         body: formData,
       });
 
-      if (!res.ok) throw new Error("Server Error");
+      if (!res.ok) throw new Error("Server error");
 
       const data = await res.json();
       const rawReply = data.reply || data.response || "Thinking...";
 
-      // 2. Translate Bot Reply
       let finalDisplay = rawReply;
-      if (displayLanguage !== 'en') {
-        // Attempt translate (will use MyMemory if NLLB fails)
+      if (displayLanguage !== "en") {
         finalDisplay = await translateText(rawReply, displayLanguage, "en");
       }
 
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: finalDisplay, originalText: rawReply },
-      ]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: ui("error") },
-      ]);
+      setMessages(prev => [...prev, {
+        sender: "bot",
+        text: finalDisplay,
+        originalText: rawReply
+      }]);
+    } catch (err) {
+      console.error(err);
+      setMessages(prev => [...prev, {
+        sender: "bot",
+        text: ui("error")
+      }]);
     } finally {
       setLoading(false);
     }
   };
 
-  /* ================= UI ================= */
   return (
     <div className="app-container">
       <div className={`chat-window ${viewMode}`}>
 
-        {/* SIDEBAR */}
+        {/* Sidebar - Chat History */}
         <div className={`chat-sidebar ${viewMode === 'mobile' ? '' : 'desktop'}`}>
           <div className="sidebar-header">
             <div className="sidebar-title">
@@ -589,13 +546,15 @@ function Chat({ user, viewMode, onViewSummary }) {
           </div>
         </div>
 
-        {/* MAIN CHAT */}
+        {/* Main Chat Area */}
         <div className="chat-main">
-          {/* HEADER */}
+          {/* Header */}
           <div className="chat-header">
             <div className="header-info">
               <div className="bot-avatar">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v12m6-6H6" /></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M12 6v12m6-6H6" />
+                </svg>
               </div>
               <div className="header-text">
                 <h3>{ui('title')}</h3>
@@ -608,38 +567,23 @@ function Chat({ user, viewMode, onViewSummary }) {
 
             <div className="header-controls">
               {user.role === 'doctor' && (
-                <button
-                  onClick={onViewSummary}
-                  title="View Patient Summary"
-                  style={{
-                    marginRight: '10px',
-                    padding: '6px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #e2e8f0',
-                    background: '#fff',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px'
-                  }}
-                >
+                <button onClick={onViewSummary} title="View Patient Summary" style={{
+                  marginRight: '10px', padding: '6px 12px', borderRadius: '8px',
+                  border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer',
+                  fontSize: '14px', display: 'flex', alignItems: 'center', gap: '5px'
+                }}>
                   <span>📋</span> Summary
                 </button>
               )}
-              <select
-                className="lang-select"
-                value={displayLanguage}
-                onChange={handleLanguageChange}
-              >
-                {SUPPORTED_LANGUAGES.map((l) => (
+              <select className="lang-select" value={displayLanguage} onChange={handleLanguageChange}>
+                {SUPPORTED_LANGUAGES.map(l => (
                   <option key={l.code} value={l.code}>{l.name}</option>
                 ))}
               </select>
             </div>
           </div>
 
-          {/* MESSAGES */}
+          {/* Messages */}
           <div className="messages-container">
             {messages.map((m, i) => (
               <div key={i} className={`message-group ${m.sender}`}>
@@ -657,6 +601,7 @@ function Chat({ user, viewMode, onViewSummary }) {
                 </div>
               </div>
             ))}
+
             {loading && (
               <div className="message-group bot">
                 <div className="msg-avatar bot">AI</div>
@@ -673,7 +618,7 @@ function Chat({ user, viewMode, onViewSummary }) {
             <div ref={bottomRef} />
           </div>
 
-          {/* INPUT */}
+          {/* Input Area */}
           <div className="input-region">
             {selectedFile && (
               <div className="file-preview-bar">
@@ -685,21 +630,46 @@ function Chat({ user, viewMode, onViewSummary }) {
             )}
 
             <div className="input-comp">
-              <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept=".pdf,.doc,.docx,.txt" />
-              <button className="action-btn" onClick={() => fileInputRef.current.click()} title="Upload File">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+              <input
+                type="file"
+                hidden
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept=".pdf,.doc,.docx,.txt"
+              />
+
+              <button className="action-btn" onClick={() => fileInputRef.current?.click()} title="Upload File">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
               </button>
 
-              <button className={`action-btn ${isRecording ? 'active-mic' : ''}`} onClick={toggleRecording} title="Voice Input">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>
+              <button
+                className={`action-btn ${isRecording ? 'active-mic' : ''}`}
+                onClick={toggleRecording}
+                title="Voice Input"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
               </button>
 
-              {/* TRANSLATE INPUT BUTTON (Visible only if not English & has text) */}
-              {displayLanguage !== 'en' && input.trim() && (
-                <button className="action-btn" onClick={handleDraftTranslation} title={`Translate to ${SUPPORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name}`}>
-                  {/* Translate Icon */}
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 8l6 6" /><path d="M4 14h6" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="M22 22l-5-10-5 10" /><path d="M14 18h6" />
+              {displayLanguage !== 'en' && input?.trim() && (
+                <button
+                  className="action-btn"
+                  onClick={handleDraftTranslation}
+                  title={`Translate to ${SUPPORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name}`}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M5 8l6 6" />
+                    <path d="M4 14h6" />
+                    <path d="M2 5h12" />
+                    <path d="M7 2h1" />
+                    <path d="M22 22l-5-10-5 10" />
+                    <path d="M14 18h6" />
                   </svg>
                 </button>
               )}
@@ -713,8 +683,15 @@ function Chat({ user, viewMode, onViewSummary }) {
                 disabled={loading}
               />
 
-              <button className="send-btn" onClick={sendMessage} disabled={loading || (!input.trim() && !selectedFile)}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+              <button
+                className="send-btn"
+                onClick={sendMessage}
+                disabled={loading || (!input?.trim() && !selectedFile)}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
               </button>
             </div>
           </div>
