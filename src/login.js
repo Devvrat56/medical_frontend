@@ -8,19 +8,35 @@ function Login({ onLogin }) {
   const [role, setRole] = useState("patient");
   const [language, setLanguage] = useState("en");
 
+  const isPatient = role === "patient";
+
   const handleLogin = () => {
-    if (!email || !password || !cancerType || !stage) {
-      alert("Please fill all fields");
+    // Basic validation — always require email + password
+    if (!email || !password) {
+      alert("Please enter email and password");
       return;
     }
 
-    onLogin({
+    // Extra validation only for patients
+    if (isPatient && (!cancerType || !stage)) {
+      alert("Please provide your cancer type and stage");
+      return;
+    }
+
+    // Prepare data to send
+    const loginData = {
       email,
       role,
-      cancerType,
-      stage,
-      language
-    });
+      language,
+    };
+
+    // Add medical info only if patient
+    if (isPatient) {
+      loginData.cancerType = cancerType;
+      loginData.stage = stage;
+    }
+
+    onLogin(loginData);
   };
 
   return (
@@ -32,30 +48,38 @@ function Login({ onLogin }) {
           <p>Your personalized medical assistant</p>
         </div>
 
+        {/* Role selection */}
         <div className="form-group">
           <label>I am a</label>
           <div className="role-select-group">
             <div
-              className={`role-option ${role === 'patient' ? 'active' : ''}`}
-              onClick={() => setRole('patient')}
+              className={`role-option ${role === "patient" ? "active" : ""}`}
+              onClick={() => {
+                setRole("patient");
+                // Optional: reset fields when switching to patient
+                // setCancerType("");
+                // setStage("");
+              }}
             >
               Patient
             </div>
             <div
-              className={`role-option ${role === 'doctor' ? 'active' : ''}`}
-              onClick={() => setRole('doctor')}
+              className={`role-option ${role === "doctor" ? "active" : ""}`}
+              onClick={() => setRole("doctor")}
             >
               Doctor
             </div>
           </div>
         </div>
 
+        {/* Email */}
         <div className="form-group">
           <label>Email Address</label>
           <div className="input-wrapper">
             <span className="input-icon">✉️</span>
             <input
               className="styled-input"
+              type="email"
               placeholder="name@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -63,13 +87,14 @@ function Login({ onLogin }) {
           </div>
         </div>
 
+        {/* Password */}
         <div className="form-group">
           <label>Password</label>
           <div className="input-wrapper">
             <span className="input-icon">🔒</span>
             <input
-              type="password"
               className="styled-input"
+              type="password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -77,25 +102,29 @@ function Login({ onLogin }) {
           </div>
         </div>
 
-        <div className="form-group">
-          <label>Medical Details</label>
-          <input
-            className="styled-input no-icon"
-            placeholder="Cancer Type (e.g. Lung)"
-            value={cancerType}
-            onChange={(e) => setCancerType(e.target.value)}
-            style={{ marginBottom: '10px' }}
-          />
-          <input
-            className="styled-input no-icon"
-            placeholder="Stage (e.g. Stage 2)"
-            value={stage}
-            onChange={(e) => setStage(e.target.value)}
-          />
-        </div>
+        {/* Medical details — only for patients */}
+        {isPatient && (
+          <div className="form-group">
+            <label>Medical Details</label>
+            <input
+              className="styled-input no-icon"
+              placeholder="Cancer Type (e.g. Lung, Breast, Leukemia)"
+              value={cancerType}
+              onChange={(e) => setCancerType(e.target.value)}
+              style={{ marginBottom: "10px" }}
+            />
+            <input
+              className="styled-input no-icon"
+              placeholder="Stage (e.g. Stage 2, IV, Recurrent)"
+              value={stage}
+              onChange={(e) => setStage(e.target.value)}
+            />
+          </div>
+        )}
 
+        {/* Language */}
         <div className="form-group">
-          <label>Language</label>
+          <label>Preferred Language</label>
           <select
             className="styled-select"
             value={language}
@@ -111,6 +140,7 @@ function Login({ onLogin }) {
           </select>
         </div>
 
+        {/* Submit button */}
         <button className="login-btn" onClick={handleLogin}>
           Sign In
         </button>

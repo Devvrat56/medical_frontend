@@ -1,0 +1,108 @@
+Oncology AI Chatbot - Project Documentation
+=======================================
+
+1. Project Overview
+-------------------
+This project is a React-based frontend for an Oncology AI Chatbot. It provides a personalized medical assistant interface for patients and doctors. Key features include:
+- Role-based login (Patient/Doctor).
+- Multilingual chat support (real-time translation).
+- Speech-to-text input.
+- File attachment support.
+- Patient history summary view.
+- Modern, responsive UI designed with CSS variables and glassmorphism effects.
+
+2. Folder Structure
+-------------------
+- / (Root): Main project directory containing config and sources.
+- /node_modules: Installed dependencies (not in source control).
+- /public: Static assets (HTML, Icons, Configs).
+- /src: Application source code.
+  - /src/utilis: Helper scripts.
+
+3. File Details & Functionality
+-------------------------------
+
+A. Root Directory
+-----------------
+- package.json: 
+  Defines project metadata and dependencies.
+  - Scripts: `start` (Dev server), `build` (Production bundle), `test` (Test runner).
+  
+- package-lock.json:
+  Exact version locks for dependencies to ensure consistent environments.
+
+- README.md:
+  Standard entry point documentation (currently contains default Create-React-App instructions).
+
+- .gitignore:
+  Specifies patterns for git to ignore.
+  - Ignores `/node_modules` (too heavy).
+  - Ignores `/build` (generated).
+  - Ignores `.env` (secrets).
+
+B. /public Directory
+--------------------
+- index.html: 
+  The single HTML page served. Contains the root div `<div id="root"></div>` where React attaches.
+- manifest.json: 
+  PWA configuration (App name, icons, theme colors).
+- robots.txt: 
+  Search engine crawler directives.
+
+C. /src Directory (Core Application Logic)
+------------------------------------------
+- index.js:
+  The entry point. Renders `<App />` into the DOM.
+
+- index.css:
+  Global base styles (font smoothing, margin resets).
+
+- App.css:
+  Main stylesheet.
+  - Defines CSS Variables (Theme: Blue/Slate).
+  - Styles for Login, Chat, and Summary components.
+  - Includes animations (slideInUp, float, etc.).
+
+- App.js:
+  Main layout controller.
+  - Manages `user` state (Login status).
+  - Routes between Login, Chat, and PatientSummary views.
+
+- login.js:
+  User authentication form.
+  - Captures: Email, Password, Role (Doctor/Patient), Cancer Info, Language.
+  - Passes user object to App.js upon "Sign In".
+
+- chat.js:
+  Complex chat interface.
+  - **State**: Interactions, Language, Recording status, File uploads.
+  - **Speech**: Uses `SpeechRecognition` API.
+  - **Translation**: Uses HuggingFace (or MyMemory fallback) to translate messages between User Language <-> English (Backend).
+  - **History**: Persists chat sessions to `localStorage`.
+  - **API**: Communicates with `https://onco-chatbot.onrender.com/api`.
+
+- PatientSummary.js:
+  Dashboard for Doctors.
+  - Displays mock patient history and sentiment analysis.
+  - Filterable by date.
+
+D. /src/utilis Directory
+------------------------
+- translate.js:
+  A utility file containing a `translateText` function using `libretranslate`. 
+  *Note: Currently unused in the main flow, as `chat.js` has its own translation implementation.*
+
+4. Note on Dependencies
+-----------------------
+The following libraries are listed in `package.json` but appear unused in the `src` folder (likely intended for future features):
+- `@huggingface/inference`: The app uses raw `fetch` requests instead.
+- `franc`: Language detection library (unused).
+- `lucide-react`: Icon pack (unused; app uses inline SVGs).
+
+5. Workflow Summary
+-------------------
+1. User loads page -> `index.js` -> `App.js`.
+2. `App.js` shows `Login` component.
+3. User logs in -> `App.js` updates state -> renders `Chat`.
+4. Chat component initializes session with Backend.
+5. User speaks/types -> Translated to English -> Sent to Backend -> Response Translated back -> Displayed.

@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { extractTextFromPdf } from "./utilis/pdfParser";
+import { translateText } from "./utilis/translate"; // Assuming this is your updated translate function
+import botAvatar from "./bot.jpg";
+import userAvatar from "./user.jpg";
 
 const API_BASE = "https://onco-chatbot.onrender.com/api";
 
@@ -20,219 +24,155 @@ const SUPPORTED_LANGUAGES = [
 /* ================= UI TEXT ================= */
 const UI_TEXT = {
   en: {
-    init: "Hello! I’m your oncology assistant. How can I help you today?",
+    init: "Hello! I'm your oncology assistant. How can I help you today?",
+    doctor_welcome: "Hello Doctor, I'm your oncology assistant.\nHow can I assist with a patient case or any question today?",
     title: "Oncology Assistant",
     online: "Online",
     connecting: "Connecting...",
     thinking: "Thinking...",
     placeholder: "Type your message...",
     error: "Something went wrong.",
+    history: "History",
+    newChat: "New Chat",
+    conversation: "Conversation",
+    summary: "Summary",
   },
   hi: {
     init: "नमस्ते! मैं आपका ऑन्कोलॉजी सहायक हूं। मैं आपकी कैसे मदद कर सकता हूँ?",
+    doctor_welcome: "नमस्ते डॉक्टर, मैं आपका ऑन्कोलॉजी सहायक हूँ।\nकिस मरीज़ के बारे में चर्चा करनी है या कोई सवाल है?",
     title: "ऑन्कोलॉजी सहायक",
     online: "ऑनलाइन",
     connecting: "कनेक्ट कर रहा है...",
     thinking: "सोच रहा हूँ...",
     placeholder: "अपना संदेश लिखें...",
     error: "कुछ गलत हो गया।",
+    history: "इतिहास",
+    newChat: "नई चैट",
+    conversation: "बातचीत",
+    summary: "सारांश",
   },
   es: {
     init: "¡Hola! Soy tu asistente de oncología. ¿Cómo puedo ayudarte hoy?",
+    doctor_welcome: "¡Hola Doctor, soy tu asistente de oncología.\n¿Cómo puedo ayudarte con un caso de paciente o cualquier pregunta?",
     title: "Asistente de Oncología",
     online: "En línea",
     connecting: "Conectando...",
     thinking: "Pensando...",
     placeholder: "Escribe tu mensaje...",
     error: "Algo salió mal.",
+    history: "Historial",
+    newChat: "Nueva Chat",
+    conversation: "Conversación",
+    summary: "Resumen",
   },
   fr: {
     init: "Bonjour ! Je suis votre assistant en oncologie. Comment puis-je vous aider ?",
+    doctor_welcome: "Bonjour Docteur, je suis votre assistant en oncologie.\nComment puis-je vous aider avec un cas de patient ou une question ?",
     title: "Assistant d'Oncologie",
     online: "En ligne",
     connecting: "Connexion...",
     thinking: "Réflexion...",
     placeholder: "Tapez votre message...",
     error: "Un problème est survenu.",
+    history: "Historique",
+    newChat: "Nouvelle Chat",
+    conversation: "Conversation",
+    summary: "Résumé",
   },
   ar: {
     init: "مرحبًا! أنا مساعد الأورام الخاص بك. كيف يمكنني مساعدتك اليوم؟",
+    doctor_welcome: "مرحبًا دكتور, أنا مساعد الأورام الخاص بك.\nكيف يمكنني مساعدتك في حالة مريض أو سؤال ما؟",
     title: "مساعد الأورام",
     online: "متصل",
     connecting: "جارٍ الاتصال...",
     thinking: "يفكر...",
     placeholder: "اكتب رسالتك...",
     error: "حدث خطأ ما.",
+    history: "التاريخ",
+    newChat: "محادثة جديدة",
+    conversation: "محادثة",
+    summary: "ملخص",
   },
   bn: {
     init: "হ্যালো! আমি আপনার অনকোলজি সহকারী। আজ আমি আপনাকে কিভাবে সাহায্য করতে পারি?",
+    doctor_welcome: "হ্যালো ডাক্তার, আমি আপনার অনকোলজি সহকারী।\nকোন রোগীর কেসে সাহায্য করব বা কোনো প্রশ্ন আছে?",
     title: "অনকোলজি সহকারী",
     online: "অনলাইন",
     connecting: "সংযোগ করা হচ্ছে...",
     thinking: "চিন্তা করছে...",
     placeholder: "আপনার বার্তা টাইপ করুন...",
     error: "কিছু ভুল হয়েছে।",
+    history: "ইতিহাস",
+    newChat: "নতুন চ্যাট",
+    conversation: "কথপোকথন",
+    summary: "সারাংশ",
   },
   ta: {
     init: "வணக்கம்! நான் உங்கள் புற்றுநோய் உதவியாளர். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?",
+    doctor_welcome: "வணக்கம் டாக்டர், நான் உங்கள் புற்றுநோய் உதவியாளர்.\nஎந்த நோயாளியின் வழக்கில் உதவ வேண்டும் அல்லது ஏதேனும் கேள்வி உள்ளதா?",
     title: "புற்றுநோய் உதவியாளர்",
     online: "ஆன்லைன்",
     connecting: "இணைக்கிறது...",
     thinking: "சிந்திக்கிறது...",
     placeholder: "உங்கள் செய்தியைத் தட்டச்சு செய்க...",
-    error: "ஏதோ தவறு நடந்துள்ளது.",
+    error: "ஏதோ தவறு நடந்துள்ளது。",
+    history: "வரலாறு",
+    newChat: "புதிய அரட்டை",
+    conversation: "உரையாடல்",
+    summary: "சுருக்கம்",
   },
   de: {
     init: "Hallo! Ich bin Ihr Onkologie-Assistent. Wie kann ich Ihnen heute helfen?",
+    doctor_welcome: "Hallo Doktor, ich bin Ihr Onkologie-Assistent.\nWie kann ich bei einem Patientenfall oder einer Frage helfen?",
     title: "Onkologie-Assistent",
     online: "Online",
     connecting: "Verbinden...",
     thinking: "Nachdenken...",
     placeholder: "Geben Sie Ihre Nachricht ein...",
     error: "Etwas ist schief gelaufen.",
+    history: "Verlauf",
+    newChat: "Neuer Chat",
+    conversation: "Gespräch",
+    summary: "Zusammenfassung",
   },
   pa: {
     init: "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਤੁਹਾਡਾ ਓਨਕੋਲੋਜੀ ਸਹਾਇਕ ਹਾਂ। ਮੈਂ ਅੱਜ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?",
+    doctor_welcome: "ਸਤ ਸ੍ਰੀ ਅਕਾਲ ਡਾਕਟਰ, ਮੈਂ ਤੁਹਾਡਾ ਓਨਕੋਲੋਜੀ ਸਹਾਇਕ ਹਾਂ।\nਕਿਸ ਮਰੀਜ਼ ਦੇ ਕੇਸ ਵਿੱਚ ਮਦਦ ਚਾਹੀਦੀ ਹੈ ਜਾਂ ਕੋਈ ਸਵਾਲ ਹੈ?",
     title: "ਓਨਕੋਲੋਜੀ ਸਹਾਇਕ",
     online: "ਔਨਲਾਈਨ",
     connecting: "ਕਨੈਕਟ ਕਰ ਰਿਹਾ ਹੈ...",
     thinking: "ਸੋਚ ਰਿਹਾ ਹੈ...",
     placeholder: "ਆਪਣਾ ਸੁਨੇਹਾ ਟਾਈਪ ਕਰੋ...",
     error: "ਕੁਝ ਗਲਤ ਹੋ ਗਿਆ।",
+    history: "ਇਤਿਹਾਸ",
+    newChat: "ਨਵੀਂ ਗੱਲਬਾਤ",
+    conversation: "ਗੱਲਬਾਤ",
+    summary: "ਸਾਰ",
   },
   sv: {
     init: "Hej! Jag är din onkologiassistent. Hur kan jag hjälpa dig idag?",
+    doctor_welcome: "Hej Doktor, jag är din onkologiassistent.\nHur kan jag hjälpa till med ett patientfall eller någon fråga?",
     title: "Onkologiassistent",
     online: "Online",
     connecting: "Ansluter...",
     thinking: "Tänker...",
     placeholder: "Skriv ditt meddelande...",
     error: "Något gick fel.",
+    history: "Historik",
+    newChat: "Ny Chatt",
+    conversation: "Konversation",
+    summary: "Sammanfattning",
   },
 };
 
-const getUiText = (lang, key) =>
-  (UI_TEXT[lang] || UI_TEXT.en)[key] || UI_TEXT.en[key];
+const getUiText = (lang, key) => (UI_TEXT[lang] || UI_TEXT.en)[key] || UI_TEXT.en[key];
 
-/* ================= TRANSLATION ================= */
-const MODEL_ID = "facebook/nllb-200-distilled-600M";
 
-const NLLB_LANG_MAP = {
-  en: "eng_Latn",
-  hi: "hin_Deva",
-  es: "spa_Latn",
-  fr: "fra_Latn",
-  ar: "arb_Arab",
-  bn: "ben_Beng",
-  ta: "tam_Taml",
-  de: "deu_Latn",
-  pa: "pan_Guru",
-  sv: "swe_Latn",
-};
-
-async function translateWithMyMemory(text, targetLang, sourceLang) {
-  const translateChunk = async (chunk) => {
-    try {
-      const res = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`
-      );
-      const data = await res.json();
-      const translation = data.responseData.translatedText;
-
-      if (translation?.includes("QUERY LENGTH LIMIT EXCEEDED") || 
-          translation?.includes("MYMEMORY WARNING")) {
-        return null;
-      }
-      return translation;
-    } catch (e) {
-      console.warn("MyMemory failed:", e);
-      return null;
-    }
-  };
-
-  if (text.length <= 500) {
-    return await translateChunk(text) || text;
-  }
-
-  const sentences = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [text];
-  const chunks = [];
-  let current = "";
-
-  for (const sentence of sentences) {
-    if ((current + sentence).length > 500) {
-      if (current) chunks.push(current.trim());
-      current = sentence;
-    } else {
-      current += sentence;
-    }
-  }
-  if (current) chunks.push(current.trim());
-
-  const translated = await Promise.all(
-    chunks.map(chunk => translateChunk(chunk).then(t => t || chunk))
-  );
-
-  return translated.join(" ");
-}
-
-async function translateText(text, targetLang, sourceLang = "en") {
-  if (!text || targetLang === sourceLang) return text;
-
-  const HF_API_KEY = process.env.REACT_APP_HF_API_KEY;
-
-  if (!HF_API_KEY) {
-    console.warn("Hugging Face API key is missing. Using fallback translation.");
-    return await translateWithMyMemory(text, targetLang, sourceLang) || text;
-  }
-
-  const srcCode = NLLB_LANG_MAP[sourceLang] || "eng_Latn";
-  const tgtCode = NLLB_LANG_MAP[targetLang] || "eng_Latn";
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-
-      const res = await fetch(
-        `https://api-inference.huggingface.co/models/${MODEL_ID}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${HF_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            inputs: text,
-            parameters: { src_lang: srcCode, tgt_lang: tgtCode },
-          }),
-          signal: controller.signal,
-        }
-      );
-
-      clearTimeout(timeout);
-
-      if (res.status === 503 && attempt === 0) {
-        await new Promise(r => setTimeout(r, 1500));
-        continue;
-      }
-
-      if (res.ok) {
-        const data = await res.json();
-        return data[0]?.translation_text || data[0]?.generated_text || text;
-      }
-    } catch (err) {
-      console.warn("HF translation attempt failed:", err);
-    }
-  }
-
-  // Final fallback
-  return await translateWithMyMemory(text, targetLang, sourceLang) || text;
-}
 
 /* ================= CHAT COMPONENT ================= */
-function Chat({ user, viewMode, onViewSummary }) {
+function Chat({ user, onViewSummary }) {
   const [displayLanguage, setDisplayLanguage] = useState(
-    localStorage.getItem("chat_language") || user.language || "en"
+    user.language || localStorage.getItem("chat_language") || "en"
   );
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -240,8 +180,21 @@ function Chat({ user, viewMode, onViewSummary }) {
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
 
+  // Sidebar toggle state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
+
+  const ui = (key) => getUiText(displayLanguage, key);
+
+  const initRef = useRef(false);
+
+  // Force language from user on mount
+  useEffect(() => {
+    setDisplayLanguage(user.language);
+    localStorage.setItem("chat_language", user.language);
+  }, []);
 
   // Load chat history
   useEffect(() => {
@@ -254,8 +207,9 @@ function Chat({ user, viewMode, onViewSummary }) {
         const last = parsed[0];
         setActiveSessionId(last.id);
         setMessages(last.messages || []);
-        setSessionId(last.backendSessionId || null);
-        setInitLoading(false);
+        setSessionId(null);
+        initRef.current = false;
+        setInitLoading(true);
         return;
       }
     }
@@ -276,18 +230,18 @@ function Chat({ user, viewMode, onViewSummary }) {
       prev.map(s =>
         s.id === activeSessionId
           ? {
-              ...s,
-              messages,
-              backendSessionId: sessionId,
-              preview: messages.length > 0
-                ? messages[messages.length - 1].text.substring(0, 60) + "..."
-                : "New Chat",
-              timestamp: Date.now(),
-            }
+            ...s,
+            messages,
+            backendSessionId: sessionId,
+            preview: messages.length > 0
+              ? messages[messages.length - 1].text.substring(0, 60) + "..."
+              : ui("newChat"),
+            timestamp: Date.now(),
+          }
           : s
       )
     );
-  }, [messages, sessionId, activeSessionId]);
+  }, [messages, sessionId, activeSessionId, displayLanguage]);
 
   const createNewSession = () => {
     const newId = Date.now().toString();
@@ -296,19 +250,24 @@ function Chat({ user, viewMode, onViewSummary }) {
       timestamp: Date.now(),
       messages: [],
       backendSessionId: null,
-      preview: "New Chat"
+      preview: ui("newChat")
     }, ...prev]);
     setActiveSessionId(newId);
     setMessages([]);
     setSessionId(null);
+    initRef.current = false;
     setInitLoading(true);
+    if (window.innerWidth < 768) setSidebarOpen(false);
   };
 
   const loadSession = (session) => {
     if (session.id === activeSessionId) return;
     setActiveSessionId(session.id);
     setMessages(session.messages || []);
-    setSessionId(session.backendSessionId || null);
+    setSessionId(null);
+    initRef.current = false;
+    setInitLoading(true);
+    if (window.innerWidth < 768) setSidebarOpen(false);
   };
 
   const formatDate = (ts) => {
@@ -323,8 +282,6 @@ function Chat({ user, viewMode, onViewSummary }) {
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
 
-  const ui = (key) => getUiText(displayLanguage, key);
-
   // Auto scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -332,7 +289,7 @@ function Chat({ user, viewMode, onViewSummary }) {
 
   // Wake up server
   useEffect(() => {
-    fetch(`${API_BASE}/health`).catch(() => {});
+    fetch(`${API_BASE}/health`).catch(() => { });
   }, []);
 
   // Speech recognition setup
@@ -367,38 +324,70 @@ function Chat({ user, viewMode, onViewSummary }) {
 
   // Initialize chat session
   useEffect(() => {
-    if (sessionId) return;
+    if (initRef.current) return;
 
     const initChat = async () => {
+      initRef.current = true;
       setInitLoading(true);
+
       try {
+        const payload = {
+          user_type: "patient", // Force "patient" type because backend does not support "doctor" yet
+          cancer_type: user.cancerType || "General", // Default for doctors
+          cancer_stage: user.stage || "N/A", // Default for doctors
+          language: "en", // ALWAYS ENGLISH FOR BACKEND
+        };
+
         const res = await fetch(`${API_BASE}/chat/init`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_type: user.role,
-            cancer_type: user.cancerType,
-            cancer_stage: user.stage,
-            language: "en",
-          }),
+          body: JSON.stringify(payload),
         });
+
+        if (!res.ok) {
+          throw new Error(`Init failed: ${res.status}`);
+        }
+
         const data = await res.json();
+        if (!data.session_id) {
+          throw new Error("Missing session_id");
+        }
+
         setSessionId(data.session_id);
-      } catch (e) {
-        console.error("Chat init failed:", e);
+
+        const welcomeKey = user.role === "doctor" ? "doctor_welcome" : "init";
+        const welcomeText = getUiText(displayLanguage, welcomeKey);
+
+        setMessages([
+          {
+            sender: "bot",
+            text: welcomeText,
+            originalText: welcomeText,
+            type: "init",
+          },
+        ]);
+      } catch (err) {
+        console.error("Chat init error:", err);
+
+        setSessionId(null);
+        initRef.current = false;
+
+        setMessages([
+          {
+            sender: "bot",
+            text:
+              displayLanguage === "en"
+                ? "Session could not be started. Please refresh."
+                : "सत्र शुरू नहीं हो सका। कृपया पेज रिफ्रेश करें।",
+          },
+        ]);
+      } finally {
+        setInitLoading(false);
       }
-
-      setMessages([{
-        sender: "bot",
-        text: UI_TEXT.en.init,
-        originalText: UI_TEXT.en.init
-      }]);
-
-      setInitLoading(false);
     };
 
     initChat();
-  }, [user.role, user.cancerType, user.stage, sessionId]);
+  }, [user.role, user.cancerType, user.stage]);
 
   const handleLanguageChange = async (e) => {
     const newLang = e.target.value;
@@ -411,9 +400,11 @@ function Chat({ user, viewMode, onViewSummary }) {
       messages.map(async (msg) => {
         if (msg.sender !== "bot" || !msg.originalText) return msg;
 
-        if (msg.originalText === UI_TEXT.en.init) {
-          return { ...msg, text: getUiText(newLang, "init") };
+        if (msg.type === "init") {
+          const key = user.role === "doctor" ? "doctor_welcome" : "init";
+          return { ...msg, text: getUiText(newLang, key) };
         }
+
         if (newLang === "en") {
           return { ...msg, text: msg.originalText };
         }
@@ -422,7 +413,7 @@ function Chat({ user, viewMode, onViewSummary }) {
           const translated = await translateText(msg.originalText, newLang, "en");
           return { ...msg, text: translated };
         } catch {
-          return msg;
+          return { ...msg, text: msg.originalText + " (Translation failed)" };
         }
       })
     );
@@ -440,7 +431,7 @@ function Chat({ user, viewMode, onViewSummary }) {
       const translated = await translateText(original, displayLanguage, "en");
       setInput(translated);
     } catch {
-      setInput(original);
+      setInput(original + " (Translation failed)");
     }
   };
 
@@ -457,6 +448,17 @@ function Chat({ user, viewMode, onViewSummary }) {
 
   const sendMessage = async () => {
     if ((!input?.trim() && !selectedFile) || loading) return;
+
+    if (!sessionId) {
+      setMessages(prev => [
+        ...prev,
+        {
+          sender: "bot",
+          text: ui("connecting"),
+        },
+      ]);
+      return;
+    }
 
     const userText = input.trim();
     const file = selectedFile;
@@ -475,6 +477,17 @@ function Chat({ user, viewMode, onViewSummary }) {
       let englishPayload = userText;
       if (displayLanguage !== "en") {
         englishPayload = await translateText(userText, "en", displayLanguage);
+      }
+
+      if (file && file.type === "application/pdf") {
+        try {
+          const pdfText = await extractTextFromPdf(file);
+          if (pdfText) {
+            englishPayload += `\n\n[Context from attached PDF file]:\n${pdfText}`;
+          }
+        } catch (e) {
+          console.error("Failed to parse PDF on frontend:", e);
+        }
       }
 
       const formData = new FormData();
@@ -517,16 +530,15 @@ function Chat({ user, viewMode, onViewSummary }) {
 
   return (
     <div className="app-container">
-      <div className={`chat-window ${viewMode}`}>
+      <div className="chat-window">
 
-        {/* Sidebar - Chat History */}
-        <div className={`chat-sidebar ${viewMode === 'mobile' ? '' : 'desktop'}`}>
+        <div className={`chat-sidebar ${sidebarOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <div className="sidebar-title">
-              <span>🕒</span> History ({user.role})
+              <span>🕒</span> {ui("history")} ({user.role})
             </div>
             <button className="new-chat-btn" onClick={createNewSession}>
-              <span>+</span> New Chat
+              <span>+</span> {ui("newChat")}
             </button>
           </div>
           <div className="session-list">
@@ -536,8 +548,8 @@ function Chat({ user, viewMode, onViewSummary }) {
                 className={`session-item ${s.id === activeSessionId ? 'active' : ''}`}
                 onClick={() => loadSession(s)}
               >
-                <div style={{ fontWeight: 600 }}>
-                  {s.messages.length > 0 ? "Conversation" : "New Chat"}
+                <div className="session-item-title">
+                  {s.messages.length > 0 ? ui("conversation") : ui("newChat")}
                 </div>
                 <div className="session-preview">{s.preview}</div>
                 <div className="session-date">{formatDate(s.timestamp)}</div>
@@ -546,15 +558,19 @@ function Chat({ user, viewMode, onViewSummary }) {
           </div>
         </div>
 
-        {/* Main Chat Area */}
         <div className="chat-main">
-          {/* Header */}
           <div className="chat-header">
             <div className="header-info">
-              <div className="bot-avatar">
+              <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M12 6v12m6-6H6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
                 </svg>
+              </button>
+
+              <div className="bot-avatar">
+                <img src={botAvatar} alt="Bot" />
               </div>
               <div className="header-text">
                 <h3>{ui('title')}</h3>
@@ -567,12 +583,8 @@ function Chat({ user, viewMode, onViewSummary }) {
 
             <div className="header-controls">
               {user.role === 'doctor' && (
-                <button onClick={onViewSummary} title="View Patient Summary" style={{
-                  marginRight: '10px', padding: '6px 12px', borderRadius: '8px',
-                  border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer',
-                  fontSize: '14px', display: 'flex', alignItems: 'center', gap: '5px'
-                }}>
-                  <span>📋</span> Summary
+                <button onClick={onViewSummary} className="summary-btn" title="View Patient Summary">
+                  <span>📋</span> {ui("summary")}
                 </button>
               )}
               <select className="lang-select" value={displayLanguage} onChange={handleLanguageChange}>
@@ -583,12 +595,11 @@ function Chat({ user, viewMode, onViewSummary }) {
             </div>
           </div>
 
-          {/* Messages */}
-          <div className="messages-container">
+          <div className="messages-container" onClick={() => setSidebarOpen(false)}>
             {messages.map((m, i) => (
               <div key={i} className={`message-group ${m.sender}`}>
                 <div className={`msg-avatar ${m.sender}`}>
-                  {m.sender === 'user' ? 'U' : 'AI'}
+                  <img src={m.sender === 'user' ? userAvatar : botAvatar} alt={m.sender} />
                 </div>
                 <div className="msg-bubble">
                   <div className="bot-content">
@@ -604,11 +615,15 @@ function Chat({ user, viewMode, onViewSummary }) {
 
             {loading && (
               <div className="message-group bot">
-                <div className="msg-avatar bot">AI</div>
+                <div className="msg-avatar bot">
+                  <img src={botAvatar} alt="Bot" />
+                </div>
                 <div className="msg-bubble typing">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span>.</span><span>.</span><span>.</span>
-                    <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 500 }}>
+                  <div className="typing-content">
+                    <span className="typing-dot">.</span>
+                    <span className="typing-dot">.</span>
+                    <span className="typing-dot">.</span>
+                    <span className="typing-text">
                       {ui('thinking')}
                     </span>
                   </div>
@@ -618,7 +633,6 @@ function Chat({ user, viewMode, onViewSummary }) {
             <div ref={bottomRef} />
           </div>
 
-          {/* Input Area */}
           <div className="input-region">
             {selectedFile && (
               <div className="file-preview-bar">
