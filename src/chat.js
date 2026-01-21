@@ -194,6 +194,7 @@ function Chat({ user, onViewSummary }) {
   useEffect(() => {
     setDisplayLanguage(user.language);
     localStorage.setItem("chat_language", user.language);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load chat history
@@ -214,6 +215,7 @@ function Chat({ user, onViewSummary }) {
       }
     }
     createNewSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.role]);
 
   // Save history
@@ -241,6 +243,7 @@ function Chat({ user, onViewSummary }) {
           : s
       )
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, sessionId, activeSessionId, displayLanguage]);
 
   const createNewSession = () => {
@@ -387,6 +390,7 @@ function Chat({ user, onViewSummary }) {
     };
 
     initChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.role, user.cancerType, user.stage]);
 
   const handleLanguageChange = async (e) => {
